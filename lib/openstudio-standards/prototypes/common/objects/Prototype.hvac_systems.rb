@@ -2460,7 +2460,8 @@ class Standard
 
       # wrap coils in a unitary system if cycling, or not if constant volume
       if fan_type == 'Cycling'
-        if heating_type == 'Water To Air Heat Pump'
+        case heating_type 
+        when 'Water To Air Heat Pump'
           # Cycling: Unitary System
           unitary_system = OpenStudio::Model::AirLoopHVACUnitarySystem.new(model)
           unitary_system.setSupplyFan(fan) unless fan.nil?
@@ -2474,9 +2475,43 @@ class Standard
           unitary_system.setSupplyAirFlowRateMethodDuringCoolingOperation('SupplyAirFlowRate')
           unitary_system.setSupplyAirFlowRateMethodDuringHeatingOperation('SupplyAirFlowRate')
           unitary_system.setSupplyAirFlowRateMethodWhenNoCoolingorHeatingisRequired('SupplyAirFlowRate')
-          unitary_system.setSupplyAirFanOperatingModeSchedule(model.alwaysOnDiscreteSchedule)
+          # Fan sched set to alwaysOff for cycling fan type
+          unitary_system.setSupplyAirFanOperatingModeSchedule(model.alwaysOffDiscreteSchedule)
           unitary_system.addToNode(air_loop.supplyInletNode)
-        else
+        when 'Single Speed Heat Pump'
+          # CyclingHeatPump: Unitary Heat Pump system
+          unitary_system = OpenStudio::Model::AirLoopHVACUnitaryHeatPumpAirToAir.new(model,
+                                                                                     model.alwaysOnDiscreteSchedule,
+                                                                                     fan,
+                                                                                     htg_coil,
+                                                                                     clg_coil,
+                                                                                     supplemental_htg_coil)
+          unitary_system.setName("#{air_loop.name} Unitary HP")
+          unitary_system.setControllingZone(zone)
+          unitary_system.setMaximumOutdoorDryBulbTemperatureforSupplementalHeaterOperation(OpenStudio.convert(40.0, 'F', 'C').get)
+          unitary_system.setFanPlacement(fan_location)
+          # Fan sched set to alwaysOff for cycling fan type
+          unitary_system.setSupplyAirFanOperatingModeSchedule(model.alwaysOffDiscreteSchedule)
+          unitary_system.addToNode(air_loop.supplyInletNode)
+        else  
+          # heating_type = NaturalGas, Electricity, Water or nil (no heat)
+          unitary_system = OpenStudio::Model::AirLoopHVACUnitarySystem.new(model)
+          unitary_system.setAvailabilitySchedule(model.alwaysOnDiscreteSchedule)
+          unitary_system.setSupplyFan(fan) unless fan.nil?
+          unitary_system.setHeatingCoil(htg_coil) unless htg_coil.nil?
+          unitary_system.setCoolingCoil(clg_coil) unless clg_coil.nil?
+          unitary_system.setName("#{air_loop.name} Unitary System")
+          unitary_system.setControllingZoneorThermostatLocation(zone)
+          unitary_system.setFanPlacement(fan_location)
+          # Fan sched set to alwaysOff for cycling fan
+          unitary_system.setSupplyAirFanOperatingModeSchedule(model.alwaysOffDiscreteSchedule)
+          unitary_system.addToNode(air_loop.supplyInletNode)
+        
+        end
+      else
+        # ConstantVolume: Packaged Rooftop Single Zone Air conditioner
+        # Need unitary system wrapper for heat pumps in order to allow control of supplemental heat
+        if heating_type = 'Single Speed Heat Pump'
           # CyclingHeatPump: Unitary Heat Pump system
           unitary_system = OpenStudio::Model::AirLoopHVACUnitaryHeatPumpAirToAir.new(model,
                                                                                      model.alwaysOnDiscreteSchedule,
@@ -2490,31 +2525,30 @@ class Standard
           unitary_system.setFanPlacement(fan_location)
           unitary_system.setSupplyAirFanOperatingModeSchedule(hvac_op_sch)
           unitary_system.addToNode(air_loop.supplyInletNode)
-        end
-      else
-        # ConstantVolume: Packaged Rooftop Single Zone Air conditioner
-        if fan_location == 'DrawThrough'
-          fan.addToNode(air_loop.supplyInletNode) unless fan.nil?
-          supplemental_htg_coil.addToNode(air_loop.supplyInletNode) unless supplemental_htg_coil.nil?
-          unless htg_coil.nil?
-            htg_coil.addToNode(air_loop.supplyInletNode)
-            # if water coil, rename controller b/c it is recreated when added to node
-            htg_coil.controllerWaterCoil.get.setName("#{htg_coil.name} Controller") if heating_type == 'Water'
-          end
-          unless clg_coil.nil?
-            clg_coil.addToNode(air_loop.supplyInletNode)
-            # if water coil, rename controller b/c it is recreated when added to node
-            clg_coil.controllerWaterCoil.get.setName("#{clg_coil.name} Controller") if cooling_type == 'Water'
-          end
-        elsif fan_location == 'BlowThrough'
-          supplemental_htg_coil.addToNode(air_loop.supplyInletNode) unless supplemental_htg_coil.nil?
-          clg_coil.addToNode(air_loop.supplyInletNode) unless clg_coil.nil?
-          htg_coil.addToNode(air_loop.supplyInletNode) unless htg_coil.nil?
-          fan.addToNode(air_loop.supplyInletNode) unless fan.nil?
         else
-          OpenStudio.logFree(OpenStudio::Error, 'openstudio.model.Model', 'Invalid fan location')
-          return false
-        end
+          if fan_location == 'DrawThrough'
+            fan.addToNode(air_loop.supplyInletNode) unless fan.nil?
+            supplemental_htg_coil.addToNode(air_loop.supplyInletNode) unless supplemental_htg_coil.nil?
+            unless htg_coil.nil?
+              htg_coil.addToNode(air_loop.supplyInletNode)
+              # if water coil, rename controller b/c it is recreated when added to node
+              htg_coil.controllerWaterCoil.get.setName("#{htg_coil.name} Controller") if heating_type == 'Water'
+            end
+            unless clg_coil.nil?
+              clg_coil.addToNode(air_loop.supplyInletNode)
+              # if water coil, rename controller b/c it is recreated when added to node
+              clg_coil.controllerWaterCoil.get.setName("#{clg_coil.name} Controller") if cooling_type == 'Water'
+            end
+          elsif fan_location == 'BlowThrough'
+            supplemental_htg_coil.addToNode(air_loop.supplyInletNode) unless supplemental_htg_coil.nil?
+            clg_coil.addToNode(air_loop.supplyInletNode) unless clg_coil.nil?
+            htg_coil.addToNode(air_loop.supplyInletNode) unless htg_coil.nil?
+            fan.addToNode(air_loop.supplyInletNode) unless fan.nil?
+          else
+            OpenStudio.logFree(OpenStudio::Error, 'openstudio.model.Model', 'Invalid fan location')
+            return false
+          end
+      	end
       end
 
       # add the OA system
