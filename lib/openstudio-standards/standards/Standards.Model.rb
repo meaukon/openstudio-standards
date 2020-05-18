@@ -53,7 +53,7 @@ class Standard
 
     # Reduce the WWR and SRR, if necessary
     OpenStudio.logFree(OpenStudio::Info, 'openstudio.standards.Model', '*** Adjusting Window and Skylight Ratios ***')
-    model_apply_prm_baseline_window_to_wall_ratio(model, climate_zone, wwr_building_type)
+    sucess, wwr_info = model_apply_prm_baseline_window_to_wall_ratio(model, climate_zone, wwr_building_type)
     model_apply_prm_baseline_skylight_to_roof_ratio(model)
 
     # Assign building stories to spaces in the building where stories are not yet assigned.
@@ -3529,6 +3529,11 @@ class Standard
     # building area types included in the model
     bat_win_wall_info = {}
 
+    # Store the baseline wwr, only used for 90.1-PRM-2019,
+    # it is necessary for looking up baseline fenestration
+    # U-factor and SHGC requirements
+    base_wwr = {}
+
     # Store the space conditioning category for later use
     space_cats = {}
 
@@ -3681,12 +3686,20 @@ class Standard
 
       # Stop here unless windows need reducing or increasing if
       # following the stable baseline approach
-      return true unless (vals['red_nr'] || vals['red_res'] || vals['red_sh']) || template == '90.1-PRM-2019'
+      return true, base_wwr unless (vals['red_nr'] || vals['red_res'] || vals['red_sh']) || template == '90.1-PRM-2019'
 
       # Determine the factors by which to reduce the window area
       vals['mult_nr_red'] = wwr_lim / vals['wwr_nr']
       vals['mult_res_red'] = wwr_lim / vals['wwr_res']
       vals['mult_sh_red'] = wwr_lim / vals['wwr_sh']
+
+      # Report baseline WWR
+      vals['wwr_nr'] *= vals['mult_nr_red']
+      vals['wwr_res'] *= vals['mult_res_red']
+      vals['wwr_sh'] *= vals['mult_sh_red']
+      wwrs = [vals['wwr_nr'], vals['wwr_res'], vals['wwr_sh']]
+      wwrs = wwrs.reject! &:nan?
+      base_wwr[bat] = wwrs.max
 
       # Reduce the window area if any of the categories necessary
       model.getSpaces.sort.each do |space|
@@ -3748,9 +3761,8 @@ class Standard
           end
         end
       end
-    end
-
-    return true
+    end 
+    return true, base_wwr
   end
 
   # Reduces the SRR to the values specified by the PRM. SRR reduction will be done by shrinking vertices toward the centroid.
